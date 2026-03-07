@@ -1,0 +1,39 @@
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# virtual env
+venv/
+.env/
+.envrc
+
+# jupyter
+.ipynb_checkpoints/
+
+# mac
+.DS_Store
+
+# vscode
+.vscode/
+
+# logs
+*.log
+
+# build
+build/
+dist/
+*.egg-info/
+
+# data outputs
+data/interim/
+data/processed/
+outputs/
+
+# models
+models/
+
+# temp
+tmp/
+temp/

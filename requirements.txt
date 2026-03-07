@@ -1,0 +1,16 @@
+# core
+numpy
+pandas
+matplotlib
+
+# notebook
+jupyter
+ipython
+
+# utilities
+tqdm
+
+# RL (future)
+torch
+stable-baselines3
+gymnasium
