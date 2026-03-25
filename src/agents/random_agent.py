@@ -7,15 +7,16 @@ from src.env.board import BoardCell, get_available_indices
 
 
 class RandomAgent:
-    """
-    A simple random agent.
-    Later you can replace this with PPO/SAC/HER/etc.
-    """
+    """Random guesser fallback and random spymaster action sampler."""
 
     def __init__(self, seed: Optional[int] = None) -> None:
         self.rng = random.Random(seed)
 
-    def select_action(self, board: List[List[BoardCell]]) -> int:
+    def select_action(self, env_or_board):
+        if hasattr(env_or_board, "sample_action"):
+            return env_or_board.sample_action(self.rng)
+
+        board: List[List[BoardCell]] = env_or_board
         available = get_available_indices(board)
         if not available:
             raise ValueError("No available actions left.")

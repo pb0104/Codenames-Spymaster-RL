@@ -1,0 +1,20 @@
+extends: base.yaml
+name: smoke_test
+
+embedding:
+  max_clues: 2000
+
+bc:
+  demo_episodes: 8
+  pretrain_epochs: 1
+
+training:
+  total_timesteps: 150
+  learning_starts: 20
+  batch_size: 32
+  net_arch:
+    - 128
+    - 128
+
+evaluation:
+  episodes: 2

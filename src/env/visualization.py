@@ -10,15 +10,17 @@ from src.env.board import BoardCell
 
 
 ROLE_COLORS = {
-    "good": "#4CAF50",
+    "friendly": "#4CAF50",
+    "opponent": "#C62828",
     "neutral": "#D6D6D6",
-    "bomb": "#000000",
+    "assassin": "#000000",
 }
 
 ROLE_TEXT_COLORS = {
-    "good": "white",
+    "friendly": "white",
+    "opponent": "white",
     "neutral": "black",
-    "bomb": "white",
+    "assassin": "white",
 }
 
 HIDDEN_COLOR = "#F5DEB3"

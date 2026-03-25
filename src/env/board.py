@@ -10,36 +10,48 @@ import random
 class BoardConfig:
     rows: int
     cols: int
-    num_good: int
-    num_bomb: int
+    num_friendly: int
+    num_opponent: int
+    num_neutral: int
+    num_assassin: int = 1
     seed: Optional[int] = None
 
     @property
     def board_size(self) -> int:
         return self.rows * self.cols
 
-    @property
-    def num_neutral(self) -> int:
-        return self.board_size - self.num_good - self.num_bomb
-
     def validate(self) -> None:
         if self.rows <= 0 or self.cols <= 0:
             raise ValueError("rows and cols must be positive integers.")
 
-        if self.num_good < 0 or self.num_bomb < 0:
-            raise ValueError("num_good and num_bomb must be non-negative.")
+        counts = (
+            self.num_friendly,
+            self.num_opponent,
+            self.num_neutral,
+            self.num_assassin,
+        )
+        if any(count < 0 for count in counts):
+            raise ValueError("Board role counts must be non-negative.")
 
-        if self.num_good + self.num_bomb > self.board_size:
-            raise ValueError("num_good + num_bomb cannot exceed board size.")
+        if sum(counts) != self.board_size:
+            raise ValueError(
+                "Board role counts must sum to the board size. "
+                f"Expected {self.board_size}, got {sum(counts)}."
+            )
 
-        if self.num_neutral < 0:
-            raise ValueError("num_neutral cannot be negative.")
+    @property
+    def num_good(self) -> int:
+        return self.num_friendly
+
+    @property
+    def num_bomb(self) -> int:
+        return self.num_assassin
 
 
 @dataclass
 class BoardCell:
     word: str
-    role: str  # "good", "neutral", "bomb"
+    role: str  # "friendly", "opponent", "neutral", "assassin"
     revealed: bool = False
     guess_order: Optional[int] = None
 
@@ -79,9 +91,10 @@ def generate_board(words: List[str], config: BoardConfig) -> List[List[BoardCell
     selected_words = rng.sample(words, config.board_size)
 
     roles = (
-        ["good"] * config.num_good
-        + ["bomb"] * config.num_bomb
+        ["friendly"] * config.num_friendly
+        + ["opponent"] * config.num_opponent
         + ["neutral"] * config.num_neutral
+        + ["assassin"] * config.num_assassin
     )
     rng.shuffle(roles)
 
@@ -126,7 +139,7 @@ def reveal_cell_by_index(board: List[List[BoardCell]], idx: int) -> BoardCell:
 
 
 def summarize_roles(board: List[List[BoardCell]]) -> dict:
-    counts = {"good": 0, "neutral": 0, "bomb": 0}
+    counts = {"friendly": 0, "opponent": 0, "neutral": 0, "assassin": 0}
     for cell in flatten_board(board):
         counts[cell.role] += 1
     return counts
@@ -164,13 +177,37 @@ def make_standard_config(
     size = rows * cols
 
     if size == 4:  # 2x2
-        return BoardConfig(rows=2, cols=2, num_good=1, num_bomb=1, seed=seed)
+        return BoardConfig(
+            rows=2,
+            cols=2,
+            num_friendly=1,
+            num_opponent=1,
+            num_neutral=1,
+            num_assassin=1,
+            seed=seed,
+        )
 
     if size == 9:  # 3x3
-        return BoardConfig(rows=3, cols=3, num_good=3, num_bomb=1, seed=seed)
+        return BoardConfig(
+            rows=3,
+            cols=3,
+            num_friendly=3,
+            num_opponent=2,
+            num_neutral=3,
+            num_assassin=1,
+            seed=seed,
+        )
 
     if size == 25:  # 5x5
-        return BoardConfig(rows=5, cols=5, num_good=8, num_bomb=1, seed=seed)
+        return BoardConfig(
+            rows=5,
+            cols=5,
+            num_friendly=8,
+            num_opponent=8,
+            num_neutral=8,
+            num_assassin=1,
+            seed=seed,
+        )
 
     raise ValueError(
         f"No preset for {rows}x{cols}. Create BoardConfig manually for custom settings."
@@ -179,13 +216,26 @@ def make_standard_config(
 
 def count_revealed_good(board) -> int:
     return sum(
-        1 for row in board for cell in row if cell.role == "good" and cell.revealed
+        1
+        for row in board
+        for cell in row
+        if cell.role == "friendly" and cell.revealed
     )
 
 
 def all_good_revealed(board) -> bool:
-    total_good = sum(1 for row in board for cell in row if cell.role == "good")
+    total_good = sum(1 for row in board for cell in row if cell.role == "friendly")
     revealed_good = sum(
-        1 for row in board for cell in row if cell.role == "good" and cell.revealed
+        1
+        for row in board
+        for cell in row
+        if cell.role == "friendly" and cell.revealed
     )
     return revealed_good == total_good
+
+
+def remaining_indices_by_role(board: List[List[BoardCell]], role: str) -> List[int]:
+    flat = flatten_board(board)
+    return [
+        idx for idx, cell in enumerate(flat) if cell.role == role and not cell.revealed
+    ]
