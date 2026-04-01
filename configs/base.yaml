@@ -1,5 +1,5 @@
 name: base
-seed: 7
+seed: 43
 
 data:
   board_words_path: data/raw/codenames_words.txt
@@ -24,18 +24,18 @@ env:
   num_opponent: 8
   num_neutral: 8
   num_assassin: 1
-  max_turns: 9
+  max_turns: 20
   max_clue_count: 9
   goal_size: 3
 
 reward:
   turn_penalty: -1.0
-  assassin_penalty: -25.0
+  assassin_penalty: -40.0
   shaped_weight: 1.0
 
 bc:
   enabled: true
-  demo_episodes: 24
+  demo_episodes: 60
   pretrain_epochs: 3
   batch_size: 32
   learning_rate: 0.001
@@ -43,7 +43,7 @@ bc:
 
 training:
   use_her: true
-  total_timesteps: 600
+  total_timesteps: 8000
   learning_rate: 0.0003
   buffer_size: 20000
   learning_starts: 50
