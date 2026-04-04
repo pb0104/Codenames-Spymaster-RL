@@ -31,7 +31,9 @@ class SACTrainingConfig:
 
 
 class SACSpymasterAgent:
-    def __init__(self, env, config: SACTrainingConfig | None = None, use_her: bool = True):
+    def __init__(
+        self, env, config: SACTrainingConfig | None = None, use_her: bool = True
+    ):
         self.env = env
         self.config = config or SACTrainingConfig()
         replay_buffer_class = HerReplayBuffer if use_her else None
@@ -70,7 +72,9 @@ class SACSpymasterAgent:
 
         observations = stack_demo_observations(demos)
         actions = stack_demo_actions(demos)
-        optimizer = torch.optim.Adam(self.model.policy.actor.parameters(), lr=learning_rate)
+        optimizer = torch.optim.Adam(
+            self.model.policy.actor.parameters(), lr=learning_rate
+        )
         losses: list[float] = []
 
         num_samples = actions.shape[0]
@@ -83,11 +87,18 @@ class SACSpymasterAgent:
 
             for start in range(0, num_samples, batch_size):
                 batch_indices = indices[start : start + batch_size]
-                obs_batch = {key: value[batch_indices] for key, value in observations.items()}
+                obs_batch = {
+                    key: value[batch_indices] for key, value in observations.items()
+                }
                 obs_tensor, _ = self.model.policy.obs_to_tensor(obs_batch)
-                target_actions = torch.as_tensor(actions[batch_indices], device=self.model.device)
+                target_actions = torch.as_tensor(
+                    actions[batch_indices], device=self.model.device
+                )
 
-                predicted_actions = self.model.policy.actor(obs_tensor)
+                mean_actions, log_std, _ = (
+                    self.model.policy.actor.get_action_dist_params(obs_tensor)
+                )
+                predicted_actions = torch.tanh(mean_actions)
                 loss = F.mse_loss(predicted_actions, target_actions)
 
                 optimizer.zero_grad()
@@ -103,7 +114,10 @@ class SACSpymasterAgent:
 
     def seed_replay_buffer(self, demos: list[DemonstrationTransition]) -> None:
         for transition in demos:
-            obs = {key: np.expand_dims(value, axis=0) for key, value in transition.obs.items()}
+            obs = {
+                key: np.expand_dims(value, axis=0)
+                for key, value in transition.obs.items()
+            }
             next_obs = {
                 key: np.expand_dims(value, axis=0)
                 for key, value in transition.next_obs.items()
@@ -111,7 +125,9 @@ class SACSpymasterAgent:
             action = np.expand_dims(transition.action, axis=0)
             reward = np.array([transition.reward], dtype=np.float32)
             done = np.array([transition.done], dtype=np.float32)
-            self.model.replay_buffer.add(obs, next_obs, action, reward, done, [transition.info])
+            self.model.replay_buffer.add(
+                obs, next_obs, action, reward, done, [transition.info]
+            )
 
     def learn(
         self,
