@@ -128,6 +128,7 @@ class CodenamesSpymasterEnv(gym.Env):
         )
         self.current_goal_indices: list[int] = []
         self.legal_clue_indices = np.arange(len(self.embedding_store.clue_words))
+        self.used_clue_indices: set[int] = set()
         self.last_decoded_action: dict[str, Any] = {}
 
         obs_dim = (
@@ -270,6 +271,8 @@ class CodenamesSpymasterEnv(gym.Env):
         board_tokens = [normalize_token(word) for word in self._board_words()]
         legal: list[int] = []
         for idx, clue in enumerate(self.embedding_store.clue_words):
+            if idx in self.used_clue_indices:
+                continue
             if any(clue in word or word in clue for word in board_tokens):
                 continue
             legal.append(idx)
@@ -349,6 +352,7 @@ class CodenamesSpymasterEnv(gym.Env):
 
         self.board = generate_board(self.words, self.board_config)
         self.turn_index = 0
+        self.used_clue_indices = set()
         self._refresh_board_embeddings()
         self._refresh_legal_clues()
         self.current_goal_indices = self._sample_goal_indices()
@@ -363,6 +367,8 @@ class CodenamesSpymasterEnv(gym.Env):
 
     def step(self, action: np.ndarray):
         clue, count = self.decode_action(action)
+        clue_index = self.embedding_store.clue_words.index(clue)
+        self.used_clue_indices.add(clue_index)
         previous_goal = self._desired_goal().copy()
         target_indices = self.current_goal_indices.copy()
         target_embeddings = self.board_embeddings[target_indices]
@@ -396,8 +402,10 @@ class CodenamesSpymasterEnv(gym.Env):
         )
 
         if not terminated and not truncated:
+            self._refresh_legal_clues()
             self.current_goal_indices = self._sample_goal_indices()
         else:
+            self._refresh_legal_clues()
             self.current_goal_indices = []
 
         observation = self._build_observation()
