@@ -92,13 +92,14 @@ class CodenamesSpymasterEnv(gym.Env):
         embedding_store: Optional[EmbeddingStore] = None,
         board_config: Optional[BoardConfig] = None,
         reward_config: Optional[RewardConfig] = None,
-        embedding_dim: int = 300,
+        embedding_dim: int | None = None,
         max_turns: int = 9,
         max_clue_count: int = 9,
         goal_size: int = 3,
         seed: Optional[int] = None,
         download_missing_nltk: bool = False,
         max_clues: int = 12000,
+        embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     ) -> None:
         super().__init__()
 
@@ -116,6 +117,7 @@ class CodenamesSpymasterEnv(gym.Env):
             dimension=embedding_dim,
             max_clues=max_clues,
             download_missing_nltk=download_missing_nltk,
+            model_name=embedding_model_name,
         )
 
         self.board: list[list[BoardCell]] = []

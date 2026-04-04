@@ -6,8 +6,11 @@ data:
   clue_words_path: data/raw/hints.txt
 
 embedding:
-  dim: 300
-  use_wordnet: true
+  dim: 384
+  use_wordnet: false
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  board_prompt: board word
+  clue_prompt: clue word
   max_clues: 8000
   min_clue_length: 3
   max_clue_length: 12
