@@ -97,7 +97,6 @@ class CodenamesSpymasterEnv(gym.Env):
         max_clue_count: int = 9,
         goal_size: int = 3,
         seed: Optional[int] = None,
-        download_missing_nltk: bool = False,
         max_clues: int = 12000,
         embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     ) -> None:
@@ -116,7 +115,6 @@ class CodenamesSpymasterEnv(gym.Env):
             clue_words_path=clue_words_path,
             dimension=embedding_dim,
             max_clues=max_clues,
-            download_missing_nltk=download_missing_nltk,
             model_name=embedding_model_name,
         )
 

@@ -10,7 +10,6 @@ import numpy as np
 from src.utils.similarity import l2_normalize
 
 
-DEFAULT_NLTK_PACKAGES = ("words", "wordnet", "omw-1.4")
 DEFAULT_SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TOKEN_RE = re.compile(r"^[a-z]+$")
 
@@ -21,41 +20,6 @@ def normalize_token(token: str) -> str:
 
 def is_legal_single_word(token: str) -> bool:
     return bool(TOKEN_RE.fullmatch(token))
-
-
-def download_nltk_packages(packages: Sequence[str] = DEFAULT_NLTK_PACKAGES) -> None:
-    import nltk
-
-    for package in packages:
-        nltk.download(package, quiet=True)
-
-
-def nltk_words_corpus() -> list[str]:
-    tokens: list[str] = []
-    try:
-        from nltk.corpus import words
-
-        tokens.extend(words.words())
-    except Exception:
-        pass
-    try:
-        from nltk.corpus import wordnet as wn
-
-        for lemma in wn.all_lemma_names():
-            tokens.append(lemma)
-    except Exception:
-        pass
-    return tokens
-
-
-def fallback_words_corpus() -> list[str]:
-    candidates: list[str] = []
-    for dictionary_path in ("/usr/share/dict/words", "/usr/dict/words"):
-        path = Path(dictionary_path)
-        if path.exists():
-            candidates.extend(path.read_text(encoding="utf-8").splitlines())
-            break
-    return candidates
 
 
 def sanitize_clue_candidates(
@@ -102,7 +66,6 @@ class EmbeddingStore:
     board_words: list[str]
     clue_words: list[str]
     dimension: int | None = None
-    use_wordnet: bool = True
     model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL
     board_prompt: str = "board word"
     clue_prompt: str = "clue word"
@@ -138,11 +101,9 @@ class EmbeddingStore:
         clue_words_path: str | Path | None = None,
         *,
         dimension: int | None = None,
-        use_wordnet: bool = True,
         max_clues: int = 12000,
         min_clue_length: int = 3,
         max_clue_length: int = 12,
-        download_missing_nltk: bool = False,
         persist_clues: bool = True,
         model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL,
         board_prompt: str = "board word",
@@ -157,52 +118,32 @@ class EmbeddingStore:
 
         if clue_words_path is not None:
             clue_words_path = Path(clue_words_path)
-        clue_words: list[str] = []
+        if clue_words_path is None:
+            raise ValueError("clue_words_path is required for the sentence-transformer clue vocabulary.")
 
-        if clue_words_path is not None and clue_words_path.exists():
-            clue_words = [
-                line.strip()
-                for line in clue_words_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+        clue_words_path = Path(clue_words_path)
+        if not clue_words_path.exists():
+            raise FileNotFoundError(f"Clue vocabulary file not found: {clue_words_path}")
 
+        raw_clue_words = [
+            line.strip()
+            for line in clue_words_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        clue_words = sanitize_clue_candidates(
+            raw_clue_words,
+            board_words=board_words,
+            max_words=max_clues,
+            min_length=min_clue_length,
+            max_length=max_clue_length,
+        )
         if not clue_words:
-            if download_missing_nltk:
-                try:
-                    download_nltk_packages()
-                except Exception:
-                    pass
-
-            corpus = nltk_words_corpus() or fallback_words_corpus()
-            clue_words = sanitize_clue_candidates(
-                corpus,
-                board_words=board_words,
-                max_words=max_clues,
-                min_length=min_clue_length,
-                max_length=max_clue_length,
-            )
-            if not clue_words:
-                clue_words = [
-                    "animal",
-                    "nature",
-                    "battle",
-                    "travel",
-                    "ocean",
-                    "science",
-                    "history",
-                    "magic",
-                    "music",
-                    "winter",
-                ]
-            if clue_words_path is not None and persist_clues:
-                clue_words_path.parent.mkdir(parents=True, exist_ok=True)
-                clue_words_path.write_text("\n".join(clue_words) + "\n", encoding="utf-8")
+            raise ValueError(f"No valid clue words found in {clue_words_path}")
 
         return cls(
             board_words=board_words,
             clue_words=clue_words,
             dimension=dimension,
-            use_wordnet=use_wordnet,
             model_name=model_name,
             board_prompt=board_prompt,
             clue_prompt=clue_prompt,

@@ -14,7 +14,7 @@ from src.env.board import BoardConfig
 from src.env.game import CodenamesSpymasterEnv
 from src.env.reward import RewardConfig
 from src.evaluation.evaluate_agent import select_policy_action
-from src.utils.embeddings import EmbeddingStore, download_nltk_packages
+from src.utils.embeddings import EmbeddingStore
 from src.utils.seed import set_global_seed
 
 
@@ -86,18 +86,14 @@ def resolve_project_path(relative_path: str) -> Path:
 def build_embedding_store(config: dict[str, Any]) -> EmbeddingStore:
     data_cfg = config["data"]
     embedding_cfg = config["embedding"]
-    if embedding_cfg.get("download_nltk", False):
-        download_nltk_packages(embedding_cfg.get("nltk_packages", []))
 
     return EmbeddingStore.from_paths(
         board_words_path=resolve_project_path(data_cfg["board_words_path"]),
         clue_words_path=resolve_project_path(data_cfg["clue_words_path"]),
         dimension=embedding_cfg.get("dim"),
-        use_wordnet=embedding_cfg.get("use_wordnet", True),
         max_clues=embedding_cfg.get("max_clues", 12000),
         min_clue_length=embedding_cfg.get("min_clue_length", 3),
         max_clue_length=embedding_cfg.get("max_clue_length", 12),
-        download_missing_nltk=embedding_cfg.get("download_nltk", False),
         model_name=embedding_cfg.get("model_name", "sentence-transformers/all-MiniLM-L6-v2"),
         board_prompt=embedding_cfg.get("board_prompt", "board word"),
         clue_prompt=embedding_cfg.get("clue_prompt", "clue word"),
