@@ -131,6 +131,8 @@ def build_env_factory(
             board_config=board_config,
             reward_config=RewardConfig(
                 turn_penalty=reward_cfg["turn_penalty"],
+                opponent_penalty=reward_cfg.get("opponent_penalty", -3.0),
+                neutral_penalty=reward_cfg.get("neutral_penalty", -1.5),
                 assassin_penalty=reward_cfg["assassin_penalty"],
                 shaped_weight=reward_cfg["shaped_weight"],
             ),

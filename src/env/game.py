@@ -20,6 +20,7 @@ from src.env.board import (
 from src.env.reward import (
     RewardConfig,
     RewardBreakdown,
+    bad_guess_penalty,
     build_step_reward,
     clue_margin,
     compute_goal_conditioned_reward,
@@ -376,9 +377,8 @@ class CodenamesSpymasterEnv(gym.Env):
         outcome = self._guesser_turn(clue, count)
         self.turn_index += 1
 
-        reward_without_goal = self.reward_config.shaped_weight * margin
-        if outcome.assassin_hit:
-            reward_without_goal += self.reward_config.assassin_penalty
+        role_penalty, bad_guess_role = bad_guess_penalty(outcome.guessed_roles, self.reward_config)
+        reward_without_goal = self.reward_config.shaped_weight * margin + role_penalty
 
         terminated = outcome.assassin_hit or all_good_revealed(self.board)
         truncated = self.turn_index >= self.max_turns and not terminated
@@ -389,6 +389,8 @@ class CodenamesSpymasterEnv(gym.Env):
             desired_goal=previous_goal,
             reward_without_goal=reward_without_goal,
             clue_margin_value=margin,
+            bad_guess_penalty=role_penalty,
+            bad_guess_role=bad_guess_role,
             assassin_hit=outcome.assassin_hit,
             config=self.reward_config,
         )
@@ -409,6 +411,8 @@ class CodenamesSpymasterEnv(gym.Env):
             "guessed_roles": outcome.guessed_roles,
             "reward_without_goal": breakdown.reward_without_goal,
             "clue_margin": breakdown.clue_margin,
+            "bad_guess_penalty": breakdown.bad_guess_penalty,
+            "bad_guess_role": breakdown.bad_guess_role,
             "assassin_hit": breakdown.assassin_hit,
             "goal_achieved": breakdown.goal_achieved,
             "reward_breakdown": breakdown.to_dict(),

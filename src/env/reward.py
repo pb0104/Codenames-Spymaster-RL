@@ -11,6 +11,8 @@ from src.utils.similarity import cosine_similarity_matrix
 @dataclass
 class RewardConfig:
     turn_penalty: float = -1.0
+    opponent_penalty: float = -3.0
+    neutral_penalty: float = -1.5
     assassin_penalty: float = -25.0
     shaped_weight: float = 1.0
 
@@ -21,7 +23,9 @@ class RewardBreakdown:
     reward_without_goal: float
     goal_reward: float
     shaped_reward: float
+    bad_guess_penalty: float
     clue_margin: float
+    bad_guess_role: str | None
     assassin_hit: bool
     goal_achieved: bool
 
@@ -59,6 +63,8 @@ def build_step_reward(
     desired_goal: np.ndarray,
     reward_without_goal: float,
     clue_margin_value: float,
+    bad_guess_penalty: float,
+    bad_guess_role: str | None,
     assassin_hit: bool,
     config: RewardConfig,
 ) -> RewardBreakdown:
@@ -70,10 +76,23 @@ def build_step_reward(
         reward_without_goal=float(reward_without_goal),
         goal_reward=float(goal_reward),
         shaped_reward=float(config.shaped_weight * clue_margin_value),
+        bad_guess_penalty=float(bad_guess_penalty),
         clue_margin=float(clue_margin_value),
+        bad_guess_role=bad_guess_role,
         assassin_hit=assassin_hit,
         goal_achieved=goal_achieved,
     )
+
+
+def bad_guess_penalty(guessed_roles: Iterable[str], config: RewardConfig) -> tuple[float, str | None]:
+    roles = list(guessed_roles)
+    if "assassin" in roles:
+        return float(config.assassin_penalty), "assassin"
+    if "opponent" in roles:
+        return float(config.opponent_penalty), "opponent"
+    if "neutral" in roles:
+        return float(config.neutral_penalty), "neutral"
+    return 0.0, None
 
 
 def compute_goal_conditioned_reward(

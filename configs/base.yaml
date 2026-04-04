@@ -30,6 +30,8 @@ env:
 
 reward:
   turn_penalty: -1.0
+  opponent_penalty: -3.0
+  neutral_penalty: -1.5
   assassin_penalty: -40.0
   shaped_weight: 1.0
 
