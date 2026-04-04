@@ -28,6 +28,7 @@ def generate_demonstrations(
     num_episodes: int,
     max_steps_per_episode: int | None = None,
 ) -> list[DemonstrationTransition]:
+    
     policy = GreedySpymaster()
     transitions: list[DemonstrationTransition] = []
 
