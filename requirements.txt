@@ -14,3 +14,4 @@ tqdm
 torch
 stable-baselines3
 gymnasium
+sentence-transformers
