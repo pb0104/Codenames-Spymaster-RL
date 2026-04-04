@@ -3,7 +3,7 @@ seed: 43
 
 data:
   board_words_path: data/raw/codenames_words.txt
-  clue_words_path: data/raw/hints.txt
+  clue_words_path: data/raw/common_words.txt
 
 embedding:
   dim: 384
