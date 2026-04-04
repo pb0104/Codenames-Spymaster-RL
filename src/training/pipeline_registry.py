@@ -158,7 +158,10 @@ def run_greedy_pipeline(runtime: TrainingRuntime) -> PipelineRun:
         config=runtime.config,
         runtime=runtime,
         agent=agent,
-        training_summary={"mode": "no_training", "notes": "Direct baseline evaluation."},
+        training_summary={
+            "mode": "no_training",
+            "notes": "Direct baseline evaluation.",
+        },
         agent_metrics=metrics,
         greedy_metrics=metrics,
         demo_transitions=0,
