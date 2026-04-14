@@ -1,0 +1,703 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{calc}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{setspace}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+
+\setstretch{1.08}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=3pt,itemsep=2pt,leftmargin=1.5em}
+\setlist[enumerate]{topsep=3pt,itemsep=2pt,leftmargin=1.5em}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue,
+  citecolor=black
+}
+
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\begin{document}
+
+\begin{center}
+{\LARGE Final Report: Reinforcement Learning for the Codenames Spymaster
+Task \par}
+\vspace{0.75em}
+\end{center}
+
+\vspace{1em}
+
+\subsection{Introduction}\label{introduction}
+
+Our project studies the spymaster role in \emph{Codenames} as a
+reinforcement learning problem. In the game, the spymaster sees the
+hidden roles of all words on the board and must give a one-word clue and
+a number that help a teammate guess friendly words while avoiding
+opponent words, neutral words, and especially the assassin. This is a
+good RL setting because each action requires balancing semantic
+similarity, long-horizon planning, and risk. A clue that is too broad
+may accidentally point to a dangerous word, while a clue that is too
+narrow may fail to make enough progress toward winning.
+
+The main goal of the project was to build a learning-based spymaster
+that uses the semantic structure of the board rather than relying only
+on hand-designed rules. Following the original proposal, we focused on
+four ideas: reward shaping, behavioral cloning, Soft Actor-Critic (SAC),
+and Hindsight Experience Replay (HER). Our final project includes all
+four. We built a goal-conditioned version of the task, a strong greedy
+semantic baseline, demonstration generation for behavioral cloning, and
+a SAC training pipeline with optional HER and ablations. Because our
+final large-scale experiments are still being completed, the final
+result tables in this draft are marked \texttt{TBD}.
+
+More broadly, this project sits at an interesting boundary between
+reinforcement learning and language-like reasoning. Codenames is not a
+standard control task in which the agent chooses from a small set of
+physical actions. Instead, the spymaster must choose a clue that is
+semantically related to some words on the board and semantically
+separated from others. That makes the problem a useful testbed for
+whether RL methods from class can be adapted to settings where
+representation quality matters as much as exploration and optimization.
+
+Our original hypothesis was that a purely model-free RL approach would
+struggle unless we injected more structure into the problem. In
+particular, we expected that three additions would matter: a semantic
+representation of clues and board words, a shaped reward that gives
+useful turn-level feedback, and a demonstration-based warm start so the
+agent does not begin from completely random behavior. The final project
+was designed to test that hypothesis.
+
+\subsection{Problem Statement}\label{problem-statement}
+
+The task is to learn a policy for the spymaster in \emph{Codenames}. At
+each turn, the spymaster sees the full board with hidden roles and must
+output a one-word clue and a positive integer count. A teammate then
+uses that clue to guess board words. The goal is to reveal all friendly
+words before hitting the assassin, while avoiding opponent and neutral
+words whenever possible.
+
+From an RL perspective, this creates several challenges. First, the
+action space is unusual because clues are words, not ordinary
+low-dimensional controls. Second, the reward is sparse at the game
+level: the agent may make several reasonable clueing decisions before
+eventually losing. Third, clue quality depends on semantic
+relationships, so the representation of words matters directly to the
+learning problem. Finally, there is a tradeoff between ambition and
+safety. A clue that aims at many friendly words can shorten the game,
+but it also increases the chance of pointing the guesser toward a bad
+word.
+
+We therefore formulated the problem as a semantic decision task. Instead
+of trying to model every aspect of open-ended language generation, we
+treated clueing as selecting a point in a semantic space and then
+decoding that point into a legal clue. This preserved the spirit of the
+game while making the problem compatible with the RL tools we wanted to
+use.
+
+\subsection{What We Did}\label{what-we-did}
+
+We modeled the Codenames spymaster as an agent that observes the full
+hidden board and outputs a clue. The environment then simulates a fixed
+teammate guesser, evaluates the outcome of that clue, and returns reward
+to the spymaster.
+
+Each episode uses a 5x5 board drawn from a fixed 400-word Codenames
+vocabulary in \texttt{data/raw/codenames\_words.txt}. In the default
+setup, the board contains 8 friendly words, 8 opponent words, 8 neutral
+words, and 1 assassin. The observation includes semantic embeddings for
+the board words, a pairwise board similarity matrix, role labels, a mask
+for unrevealed words, and a goal representation. The environment is
+goal-conditioned: on each turn it chooses a small subset of remaining
+friendly words as the current target, and the agent is rewarded for
+giving a clue that helps reveal that subset safely.
+
+The agent's action is represented as a continuous vector. Most of the
+vector corresponds to a clue embedding, and the final scalar corresponds
+to the clue count. The environment decodes that vector into the nearest
+legal clue word from a filtered clue vocabulary and converts the count
+into an integer between 1 and 9. This lets us use SAC, which is
+naturally designed for continuous actions, while still producing valid
+game actions.
+
+The final implementation uses sentence-transformer embeddings from
+\texttt{all-MiniLM-L6-v2}. The clue vocabulary is drawn from a curated
+list, filtered to single-word clues, and screened to remove obvious
+illegal overlaps with board words. In the base configuration, the clue
+vocabulary is capped at 8000 candidates.
+
+This design means that the learned agent is not generating language in
+the full open-ended sense. Instead, it is solving a structured semantic
+control problem. For our purposes, that was a feature rather than a
+limitation: it let us focus on the central RL question of whether the
+agent could learn to give better clues over time given the board
+structure, reward function, and demonstrations.
+
+\subsection{Approach}\label{approach}
+
+Our approach combines a strong heuristic baseline with off-policy
+reinforcement learning. The baseline searches over legal clue words and
+chooses the clue and count that maximize a cosine-margin objective: the
+clue should be close to the intended friendly targets and far from the
+most dangerous alternative. This baseline serves two purposes. First, it
+is the main comparison point for the learning-based agent. Second, it
+generates demonstration trajectories for behavioral cloning.
+
+The learning agent uses Stable-Baselines3 SAC with a multi-input policy.
+Before RL fine-tuning, we optionally pretrain the actor on
+demonstrations from the greedy baseline using behavioral cloning. The BC
+stage minimizes mean-squared error between the actor's output action
+vector and the demonstration action vector. We can also seed the replay
+buffer with those demonstrations so that early exploration starts from a
+more meaningful set of transitions.
+
+HER is used because the task has sparse elements even after shaping. A
+clue may be partially useful even if it does not fully solve the turn,
+and a game may contain many partially successful states before a
+complete win. In our environment, each turn has a desired goal
+consisting of a coherent subset of remaining friendly words. HER allows
+transitions to be relabeled in terms of achieved goals, which is a
+natural fit for this kind of partial progress.
+
+Reward shaping was central to our method. The reward combines three
+signals. First, we use a semantic clue-margin term that measures how
+well the clue separates intended friendly words from dangerous words.
+Second, we add penalties when the guesser reveals an opponent, neutral,
+or assassin word. Third, we add a turn penalty when the desired goal
+subset is not achieved. The goal was to avoid a purely sparse ``win or
+lose'' signal, which would make the problem much harder to learn from.
+
+Conceptually, the final method can be summarized as follows. We start
+with a semantic representation of the board and clue space. We define a
+strong non-learning baseline in that same semantic space. We use the
+baseline both as a comparator and as a source of demonstrations. We then
+train a continuous-action RL policy with SAC, optionally warm-started by
+behavioral cloning and assisted by HER and reward shaping. This made the
+project much more than a direct application of one algorithm; it became
+an exercise in structuring the problem so that the algorithm had a
+realistic chance to learn.
+
+\subsection{Method Summary Table}\label{method-summary-table}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Component
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Final choice
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Why we used it
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Task formulation & Goal-conditioned spymaster-only RL & Simplifies
+evaluation and isolates clue quality \\
+Board setup & 5x5 Codenames board & Matches the standard game format
+closely enough for the project \\
+Representation & Sentence-transformer embeddings & Gives a usable
+semantic space for both clues and board words \\
+Action space & Continuous clue embedding + scalar count & Makes SAC
+applicable while preserving semantic flexibility \\
+Guesser & Fixed greedy teammate & Stabilizes evaluation and reduces
+multi-agent complexity \\
+Baseline & Greedy cosine-margin clue generator & Strong semantic
+baseline and source of demonstrations \\
+RL algorithm & SAC & Off-policy continuous-control method covered in
+class and well suited to the action design \\
+Replay strategy & HER & Helps with partial progress and sparse-goal
+structure \\
+Pretraining & Behavioral cloning from greedy demonstrations & Improves
+initialization over random exploration \\
+Reward & Margin shaping + bad-guess penalties + goal penalty & Gives
+denser signal than pure win/loss reward \\
+\end{longtable}
+
+\subsection{Related Ideas That Influenced the
+Project}\label{related-ideas-that-influenced-the-project}
+
+There was not space in our presentation for a full related-work review,
+but a few ideas heavily influenced the final design. SAC and HER
+directly motivated the RL side of the project, since we wanted an
+off-policy algorithm that works well with continuous actions and a
+replay strategy that can help on sparse-goal problems. Sentence-BERT
+style embeddings influenced the semantic representation, since the core
+difficulty in Codenames is measuring whether a clue groups the right
+words and separates them from the wrong ones. More broadly, the project
+was influenced by prior work on embedding-based semantic reasoning in
+word games and language-adjacent control tasks, even though our final
+system is purpose-built for this course project rather than a direct
+reproduction of a single paper.
+
+The most important influence was not a single prior result, but a
+pattern from recent ML work: when the task has language-like structure,
+raw RL is often not enough on its own. Representation learning, shaping,
+imitation, and task reformulation often matter just as much as the
+choice of optimizer. Our project followed that pattern closely.
+
+\subsection{Baselines and Experimental
+Setup}\label{baselines-and-experimental-setup}
+
+Our main baseline is the greedy spymaster described above. This is a
+meaningful baseline because it already uses semantic information and is
+much stronger than random clueing. In addition to that baseline, we
+planned ablation experiments comparing SAC with HER but without reward
+shaping or behavioral cloning, SAC with HER and reward shaping but
+without behavioral cloning, and the full method with reward shaping,
+behavioral cloning, and HER. These ablations are meant to test the
+central hypothesis from the proposal: that semantic shaping and
+imitation-based warm starts should improve learning over plain RL.
+
+The current reproducible training setup uses a 5x5 board, 8 friendly
+words, a goal size of 3, up to 8000 clue candidates, behavioral cloning
+from 60 demonstration episodes, 3 BC epochs, and 8000 SAC training
+timesteps. HER uses 4 sampled goals with the \texttt{future} selection
+strategy. Our evaluation reports mean return, mean turns, win rate,
+assassin rate, and friendly reveal rate. Those metrics were chosen
+because win rate alone is not enough in this domain: an agent can be
+conservative and avoid the assassin while revealing too few friendly
+words, or it can reveal many friendly words but still fail through risky
+clues.
+
+To reproduce the current pipeline, one can create a Python 3.12
+environment, install the project requirements, run the main SAC/HER
+training configuration, and then run the ablation suite using the same
+base settings. We also built an end-to-end smoke test to verify the full
+pipeline before larger experiments.
+
+\subsection{Experimental Settings
+Table}\label{experimental-settings-table}
+
+\begin{longtable}[]{@{}ll@{}}
+\toprule\noalign{}
+Setting & Value \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Board size & 5 x 5 \\
+Friendly / Opponent / Neutral / Assassin & 8 / 8 / 8 / 1 \\
+Max turns & 20 \\
+Max clue count & 9 \\
+Goal size & 3 \\
+Embedding model & \texttt{all-MiniLM-L6-v2} \\
+Clue vocabulary size cap & 8000 \\
+BC enabled & Yes \\
+Demonstration episodes & 60 \\
+BC epochs & 3 \\
+RL algorithm & SAC \\
+HER enabled & Yes \\
+Total timesteps & 8000 \\
+Evaluation episodes in current base config & 3 \\
+Seed in current base config & 43 \\
+\end{longtable}
+
+\subsection{Baseline and Ablation
+Template}\label{baseline-and-ablation-template}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2000}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Method
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Reward shaping
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Behavioral cloning
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+HER
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Notes
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Greedy baseline & N/A & N/A & N/A & Non-learning semantic heuristic \\
+SAC + HER & No & No & Yes & Plain RL-style baseline \\
+SAC + HER + shaping & Yes & No & Yes & Tests the value of reward
+shaping \\
+Full method & Yes & Yes & Yes & Proposed final approach \\
+Optional additional baseline & \texttt{TBD} & \texttt{TBD} &
+\texttt{TBD} & Add if you include another comparison in the
+presentation \\
+\end{longtable}
+
+\subsection{Results}\label{results}
+
+Final experimental results are still being finalized, so the main
+quantitative tables and claims are left as \texttt{TBD}. The intended
+final comparison will report the greedy baseline, SAC/HER without
+shaping or BC, SAC/HER with shaping only, and the full method. For each,
+we plan to report mean return, win rate, assassin rate, friendly reveal
+rate, mean turns, and the number of evaluation episodes.
+
+Although those final results are not ready yet, we do have smoke-test
+and debugging runs that confirm the pipeline works end to end. In those
+small runs, the greedy baseline performs strongly while the short-run
+BC-pretrained and SAC+HER models remain weak. That is exactly what we
+would expect: those runs were designed to verify the full training loop,
+not to produce a competitive final policy. We therefore treat them only
+as sanity checks and not as evidence for the final claims of the
+project.
+
+\subsubsection{Main Results Table
+Template}\label{main-results-table-template}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 12\tabcolsep) * \real{0.1429}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Method
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Mean return
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Win rate
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Assassin rate
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Friendly reveal rate
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Mean turns
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Eval episodes
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Greedy baseline & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} &
+\texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+SAC + HER & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} &
+\texttt{TBD} & \texttt{TBD} \\
+SAC + HER + shaping & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} &
+\texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+Full method & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD}
+& \texttt{TBD} & \texttt{TBD} \\
+\end{longtable}
+
+\subsubsection{Optional Multi-Seed Summary
+Table}\label{optional-multi-seed-summary-table}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1667}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1667}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1667}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1667}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1667}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1667}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Method
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Seeds
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Mean win rate
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Std. dev. win rate
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Mean return
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Std. dev. return
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Greedy baseline & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} &
+\texttt{TBD} & \texttt{TBD} \\
+SAC + HER & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} &
+\texttt{TBD} \\
+SAC + HER + shaping & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} &
+\texttt{TBD} & \texttt{TBD} \\
+Full method & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD}
+& \texttt{TBD} \\
+\end{longtable}
+
+\subsubsection{Qualitative Analysis
+Template}\label{qualitative-analysis-template}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Example board/clue situation
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+What the greedy baseline did
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+What the learned policy did
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Interpretation
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+\texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+\end{longtable}
+
+\subsubsection{Result Discussion
+Template}\label{result-discussion-template}
+
+Once the final results are available, this section should answer four
+concrete questions. First, did the full method outperform the plain RL
+ablations? Second, how large was the gap between the learned policies
+and the greedy baseline? Third, did reward shaping mainly improve sample
+efficiency, final performance, or both? Fourth, did behavioral cloning
+reduce instability or only provide a short-lived warm start? Writing the
+discussion around these questions will make the final report much more
+focused than simply restating the table entries.
+
+\subsection{Deviations from the
+Proposal}\label{deviations-from-the-proposal}
+
+The final project stayed close to the proposal in spirit, but there were
+several important deviations. First, we fixed the teammate guesser
+instead of trying to learn both players jointly. We made this decision
+because jointly training a spymaster and a guesser would have introduced
+much more instability and would have made it harder to tell whether
+gains came from better clueing or simply from a different teammate
+policy. Fixing the guesser turned the project into a much cleaner
+controlled experiment.
+
+Second, we did not treat clue generation as unconstrained language
+generation. Instead, the policy outputs a continuous embedding that is
+decoded to the nearest legal clue in a fixed vocabulary. This was mainly
+a practical decision. It keeps the action space manageable for SAC,
+preserves valid game actions, and still allows the learned policy to
+operate in a semantic space rather than a small hand-coded action set.
+
+Third, the final system consolidated around sentence-transformer
+embeddings rather than experimenting with a larger variety of symbolic
+or lexical resources. This helped us keep the project coherent and
+reproducible. Once the environment, baseline, and reward function were
+all using the same semantic representation, the rest of the pipeline
+became easier to build and debug.
+
+Finally, the current training scale is still modest. Much of the project
+effort went into getting a correct, inspectable, reproducible pipeline
+rather than immediately scaling to long expensive runs. That is one
+reason the final results are still pending.
+
+Taken together, these deviations reflect a general theme of the project:
+narrowing the scope was often necessary to make the core RL question
+answerable. Instead of asking whether we could solve all of
+\emph{Codenames} at once, we asked whether a spymaster can learn better
+clueing behavior in a controlled semantic environment. That narrower
+question was much more realistic for the class project timeline and
+still scientifically meaningful.
+
+\subsection{What We Learned}\label{what-we-learned}
+
+One of the main things we learned is that this problem is much more
+tractable once it is expressed in semantic space. A clue in Codenames is
+not naturally a low-dimensional symbolic action. Thinking of clueing as
+movement in an embedding space made several parts of the project line up
+at once: the action space, the baseline, the reward shaping, and the
+guesser model all became easier to define.
+
+We also learned that sparse reward alone would likely be too weak for
+this task. If the only signal is eventual success or failure, then most
+early trajectories look equally bad. Reward shaping gave the agent
+feedback about whether a clue was at least semantically promising, even
+if the full turn or full game was not yet successful. That did not solve
+the problem by itself, but it made the learning problem much better
+structured.
+
+Another lesson was that the greedy baseline was useful for more than
+evaluation. It became an important tool for debugging and for generating
+demonstrations. In a task like this, random exploration is unlikely to
+stumble into good semantic clues often enough to be efficient.
+Behavioral cloning gives the policy a much better starting point, and
+even when the final learned policy does not beat the baseline, the
+baseline still helps us build and understand the system.
+
+More broadly, the experience reinforced a course-level lesson: combining
+methods is often harder, but also more realistic, than using any one
+method in isolation. Our project was not ``just SAC'' or ``just HER.''
+The working version depended on a combination of representation design,
+reward shaping, imitation, and off-policy RL. That layering was one of
+the most important practical takeaways from the project.
+
+There was also a more practical lesson about experimentation. In a
+project like this, it is easy to confuse ``the method is weak'' with
+``the pipeline is broken.'' Building small smoke tests and debugging
+runs first turned out to be essential. That process did not make the
+final learned policy stronger by itself, but it made our conclusions
+more trustworthy because we could separate infrastructure issues from
+actual learning difficulty.
+
+\subsection{Development Path}\label{development-path}
+
+The path to the current system was iterative rather than linear. Early
+on, the main question was how to represent clues and board words in a
+way that made the game learnable. Once we committed to embedding-based
+semantics, it became natural to build a cosine-margin baseline, and that
+baseline quickly became the center of the rest of the system. It
+produced clues that were good enough to use as demonstrations, and it
+also exposed when the clue vocabulary or similarity structure was not
+behaving as expected.
+
+A second important step was separating correctness from performance. We
+built smoke-test configs and notebooks that verify environment reset and
+step logic, clue decoding, demonstration generation, and short SAC/HER
+runs. Those small tests were essential because they let us debug the
+mechanics of the system without confusing infrastructure bugs with
+genuine learning difficulty. In hindsight, that separation saved a lot
+of time.
+
+A third lesson from the development process was that simplifying the
+game can make the scientific story stronger. Fixing the guesser,
+constraining clues to a filtered vocabulary, and using coherent target
+subsets all reduce realism somewhat, but they also make the problem
+better defined and easier to evaluate. Those simplifications were not
+accidental shortcuts; they were part of turning a very open-ended game
+into a tractable RL problem.
+
+If we were continuing the project beyond the class, the next stage would
+be to scale experiments rather than redesign the method from scratch. At
+this point the project already has a clear environment, a meaningful
+baseline, and a structured RL pipeline. The remaining work is mostly
+empirical: run longer training, evaluate across seeds, and determine
+which combination of shaping, imitation, and HER actually matters most.
+
+\subsection{Limitations and Future
+Work}\label{limitations-and-future-work}
+
+The current project still has several clear limitations. The guesser is
+fixed rather than learned, clue generation is limited to a candidate
+vocabulary, and the current training budgets are still relatively small.
+The environment also approximates the real game's legal clue rules
+rather than modeling every edge case. Because of those choices, the
+project should be understood as a structured RL study of the spymaster
+role, not as a complete superhuman Codenames system.
+
+The most obvious next steps are to scale up training, evaluate across
+multiple random seeds, test more embedding models, and complete the
+ablation study with stronger final runs. A natural extension would be to
+compare the current continuous embedding-action approach against a
+discrete-action formulation over clue vocabularies, or to replace the
+fixed guesser with stronger or more human-like teammate policies.
+
+\subsection{Reproducibility Checklist}\label{reproducibility-checklist}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Item
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Included in project?
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Notes
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Fixed board vocabulary & Yes & Same board word source across runs \\
+Fixed clue vocabulary construction & Yes & Filtered and capped clue
+set \\
+Configurable hyperparameters & Yes & Main settings stored in config
+files \\
+Deterministic seeds & Yes & Seeded runs supported \\
+Baseline implementation & Yes & Greedy semantic baseline available \\
+Ablation setup & Yes & Core variants already defined \\
+Smoke-test pipeline & Yes & End-to-end debugging workflow included \\
+Final large-scale results & \texttt{TBD} & Still running / not
+finalized \\
+\end{longtable}
+
+\subsection{Conclusion}\label{conclusion}
+
+This project implemented a full RL pipeline for the Codenames spymaster
+task, grounded in the ideas from our proposal. The final system includes
+a custom goal-conditioned environment, semantic embeddings for board
+words and clues, a greedy semantic baseline, behavioral cloning from
+demonstrations, and SAC training with optional HER and ablations. Even
+before the final result runs are complete, the project already provides
+a reproducible framework for studying semantic decision-making in a
+word-based game.
+
+The biggest conceptual contribution of the project is not any single
+algorithmic component. It is the way the task was reformulated so that
+reinforcement learning becomes plausible at all. By treating clueing as
+semantic control in embedding space, and by combining reward shaping
+with imitation and HER, we turned a difficult language-like problem into
+something that can be explored with the RL tools from class.
+
+\subsection{Bibliography}\label{bibliography}
+
+Tu, I., and teammates. \emph{Codenames Proposal}. Project proposal PDF
+included in the repository as \texttt{Codenames\ Proposal.pdf}.
+
+Haarnoja, T., Zhou, A., Abbeel, P., and Levine, S. ``Soft Actor-Critic:
+Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic
+Actor.'' \emph{Proceedings of ICML}, 2018.
+
+Andrychowicz, M., Wolski, F., Ray, A., et al.~``Hindsight Experience
+Replay.'' \emph{Proceedings of NeurIPS}, 2017.
+
+Reimers, N., and Gurevych, I. ``Sentence-BERT: Sentence Embeddings using
+Siamese BERT-Networks.'' \emph{Proceedings of EMNLP-IJCNLP}, 2019.
+
+Stable-Baselines3 documentation and source code.
+
+Gymnasium documentation.
+
+PyTorch documentation.
+
+Sentence-Transformers documentation.
+
+Chvatil, Vlaada. \emph{Codenames}. Czech Games Edition, 2015.
+
+\subsection{Documentation of Sources Used for Code, Including
+LLMs}\label{documentation-of-sources-used-for-code-including-llms}
+
+The implementation relies on external libraries rather than copied
+standalone code. In particular, Stable-Baselines3 was used for SAC and
+HER support, Gymnasium for the environment interface, PyTorch for
+supervised actor pretraining, and Sentence-Transformers for semantic
+embeddings. The project also used general library documentation for
+those packages during development.
+
+LLM assistance was used during the project as a coding and writing aid.
+This included help with implementation scaffolding, debugging
+suggestions, code explanation, refactoring ideas, and drafting the
+report. All final design choices, integration decisions, and submitted
+conclusions were reviewed and edited by the project team.
+
+\end{document}
