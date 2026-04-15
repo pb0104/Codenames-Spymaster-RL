@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+import numpy as np
 import yaml
 
 from src.agents.bc_pretrain import DemonstrationTransition
@@ -27,6 +28,7 @@ class TrainingRuntime:
     embedding_store: EmbeddingStore
     env_factory: Callable[[], CodenamesSpymasterEnv]
     eval_env_factory: Callable[[], CodenamesSpymasterEnv]
+    rollout_env_factory: Callable[[], CodenamesSpymasterEnv]
 
 
 @dataclass
@@ -110,6 +112,17 @@ def build_env_factory(
     reward_cfg = config["reward"]
     base_seed = config.get("seed", 0) + seed_offset
     call_state = {"count": 0}
+    board_size = env_cfg["rows"] * env_cfg["cols"]
+    fixed_board_words: list[str] | None = None
+    if env_cfg.get("fixed_board_words", False):
+        fixed_word_seed = int(env_cfg.get("fixed_board_word_seed", config.get("seed", 0)))
+        rng = np.random.default_rng(fixed_word_seed)
+        chosen_indices = rng.choice(
+            len(embedding_store.board_words), size=board_size, replace=False
+        )
+        fixed_board_words = [
+            embedding_store.board_words[int(index)] for index in chosen_indices
+        ]
 
     def factory() -> CodenamesSpymasterEnv:
         env_seed = base_seed + call_state["count"]
@@ -140,6 +153,8 @@ def build_env_factory(
             max_clue_count=env_cfg["max_clue_count"],
             goal_size=env_cfg["goal_size"],
             seed=env_seed,
+            fixed_board_words=fixed_board_words,
+            shuffle_fixed_board_words=env_cfg.get("shuffle_fixed_board_words", True),
         )
 
     return factory
@@ -153,6 +168,7 @@ def prepare_runtime(config: dict[str, Any]) -> TrainingRuntime:
         embedding_store=embedding_store,
         env_factory=build_env_factory(config, embedding_store),
         eval_env_factory=build_env_factory(config, embedding_store, seed_offset=999),
+        rollout_env_factory=build_env_factory(config, embedding_store, seed_offset=2024),
     )
 
 

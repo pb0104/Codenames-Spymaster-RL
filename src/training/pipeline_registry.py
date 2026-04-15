@@ -23,6 +23,11 @@ PIPELINE_OVERRIDES: dict[str, dict[str, Any]] = {
     "sac_her": {
         "name": "sac_her",
         "bc": {"enabled": True},
+        "env": {
+            "fixed_board_words": True,
+            "shuffle_fixed_board_words": True,
+        },
+        "reward": {"shaped_weight": 0.0},
         "training": {"use_her": True},
         "output": {
             "metrics_file": "sac_her_metrics.json",
@@ -32,6 +37,11 @@ PIPELINE_OVERRIDES: dict[str, dict[str, Any]] = {
     "greedy": {
         "name": "greedy",
         "bc": {"enabled": False},
+        "env": {
+            "fixed_board_words": True,
+            "shuffle_fixed_board_words": True,
+        },
+        "reward": {"shaped_weight": 0.0},
         "output": {
             "metrics_file": "greedy_metrics.json",
             "model_file": "greedy_model.zip",
@@ -39,11 +49,38 @@ PIPELINE_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "greedy_bc_pretrain": {
         "name": "greedy_bc_pretrain",
-        "bc": {"enabled": True},
+        "bc": {
+            "enabled": True,
+            "demo_episodes": 192,
+            "pretrain_epochs": 80,
+            "batch_size": 64,
+            "learning_rate": 3e-4,
+            "cosine_margin_loss_weight": 0.5,
+            "seed_replay_buffer": True,
+        },
+        "env": {
+            "fixed_board_words": True,
+            "shuffle_fixed_board_words": True,
+        },
+        "reward": {"shaped_weight": 0.0},
         "training": {"use_her": False},
         "output": {
             "metrics_file": "greedy_bc_pretrain_metrics.json",
             "model_file": "greedy_bc_pretrain_model.zip",
+        },
+    },
+    "sac_her_reward": {
+        "name": "sac_her_reward",
+        "bc": {"enabled": True},
+        "env": {
+            "fixed_board_words": True,
+            "shuffle_fixed_board_words": True,
+        },
+        "reward": {"shaped_weight": 1.0},
+        "training": {"use_her": True},
+        "output": {
+            "metrics_file": "sac_her_reward_metrics.json",
+            "model_file": "sac_her_reward_model.zip",
         },
     },
 }
@@ -95,7 +132,12 @@ def evaluate_against_greedy(runtime: TrainingRuntime, episodes: int) -> dict[str
     )
 
 
-def run_sac_her_pipeline(runtime: TrainingRuntime) -> PipelineRun:
+def run_sac_pipeline(
+    runtime: TrainingRuntime,
+    *,
+    pipeline_name: str,
+    agent_label: str,
+) -> PipelineRun:
     config = runtime.config
     training_cfg = config["training"]
     bc_cfg = config["bc"]
@@ -121,12 +163,13 @@ def run_sac_her_pipeline(runtime: TrainingRuntime) -> PipelineRun:
         bc_epochs=bc_cfg["pretrain_epochs"] if bc_cfg["enabled"] else 0,
         bc_batch_size=bc_cfg["batch_size"],
         bc_learning_rate=bc_cfg["learning_rate"],
+        bc_cosine_margin_loss_weight=bc_cfg.get("cosine_margin_loss_weight", 0.0),
         seed_buffer=bc_cfg["seed_replay_buffer"],
     )
 
     run = PipelineRun(
-        pipeline_name="sac_her",
-        agent_label="SAC + HER",
+        pipeline_name=pipeline_name,
+        agent_label=agent_label,
         config=config,
         runtime=runtime,
         agent=agent,
@@ -143,6 +186,22 @@ def run_sac_her_pipeline(runtime: TrainingRuntime) -> PipelineRun:
     return persist_pipeline_run(run)
 
 
+def run_sac_her_pipeline(runtime: TrainingRuntime) -> PipelineRun:
+    return run_sac_pipeline(
+        runtime,
+        pipeline_name="sac_her",
+        agent_label="BC + SAC + HER",
+    )
+
+
+def run_sac_her_reward_pipeline(runtime: TrainingRuntime) -> PipelineRun:
+    return run_sac_pipeline(
+        runtime,
+        pipeline_name="sac_her_reward",
+        agent_label="BC + SAC + HER + Reward Shaping",
+    )
+
+
 def run_greedy_pipeline(runtime: TrainingRuntime) -> PipelineRun:
     eval_cfg = runtime.config["evaluation"]
     agent = build_demo_policy(runtime.config)
@@ -154,7 +213,7 @@ def run_greedy_pipeline(runtime: TrainingRuntime) -> PipelineRun:
     )
     run = PipelineRun(
         pipeline_name="greedy",
-        agent_label="Greedy Spymaster",
+        agent_label="Greedy",
         config=runtime.config,
         runtime=runtime,
         agent=agent,
@@ -193,18 +252,22 @@ def run_greedy_bc_pretrain_pipeline(runtime: TrainingRuntime) -> PipelineRun:
         epochs=bc_cfg["pretrain_epochs"],
         batch_size=bc_cfg["batch_size"],
         learning_rate=bc_cfg["learning_rate"],
+        cosine_margin_loss_weight=bc_cfg.get("cosine_margin_loss_weight", 0.0),
     )
     if bc_cfg["seed_replay_buffer"]:
         agent.seed_replay_buffer(demos)
 
+    bc_summary = dict(agent.last_bc_pretrain_metrics)
+    bc_summary["bc_losses"] = bc_losses
+
     run = PipelineRun(
         pipeline_name="greedy_bc_pretrain",
-        agent_label="Greedy + BC Pretrain",
+        agent_label="BC",
         config=config,
         runtime=runtime,
         agent=agent,
         training_summary={
-            "bc_losses": bc_losses,
+            **bc_summary,
             "replay_buffer_seeded": bool(bc_cfg["seed_replay_buffer"]),
             "rl_finetune_timesteps": 0,
         },
@@ -224,6 +287,7 @@ PIPELINE_REGISTRY: dict[str, PipelineRunner] = {
     "greedy": run_greedy_pipeline,
     "greedy_bc_pretrain": run_greedy_bc_pretrain_pipeline,
     "sac_her": run_sac_her_pipeline,
+    "sac_her_reward": run_sac_her_reward_pipeline,
 }
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 import random
 
 
@@ -78,17 +78,33 @@ def flatten_board(board: List[List[BoardCell]]) -> List[BoardCell]:
     return [cell for row in board for cell in row]
 
 
-def generate_board(words: List[str], config: BoardConfig) -> List[List[BoardCell]]:
+def generate_board(
+    words: List[str],
+    config: BoardConfig,
+    *,
+    selected_words: Optional[Sequence[str]] = None,
+    shuffle_selected_words: bool = True,
+) -> List[List[BoardCell]]:
     config.validate()
 
-    if len(words) < config.board_size:
-        raise ValueError(
-            f"Need at least {config.board_size} words, but only got {len(words)}."
-        )
-
     rng = random.Random(config.seed)
-
-    selected_words = rng.sample(words, config.board_size)
+    if selected_words is None:
+        if len(words) < config.board_size:
+            raise ValueError(
+                f"Need at least {config.board_size} words, but only got {len(words)}."
+            )
+        board_words = rng.sample(words, config.board_size)
+    else:
+        board_words = list(selected_words)
+        if len(board_words) != config.board_size:
+            raise ValueError(
+                "selected_words must match the board size. "
+                f"Expected {config.board_size}, got {len(board_words)}."
+            )
+        if len(set(board_words)) != len(board_words):
+            raise ValueError("selected_words must be unique.")
+        if shuffle_selected_words:
+            rng.shuffle(board_words)
 
     roles = (
         ["friendly"] * config.num_friendly
@@ -99,7 +115,7 @@ def generate_board(words: List[str], config: BoardConfig) -> List[List[BoardCell
     rng.shuffle(roles)
 
     flat_cells = [
-        BoardCell(word=word, role=role) for word, role in zip(selected_words, roles)
+        BoardCell(word=word, role=role) for word, role in zip(board_words, roles)
     ]
 
     board: List[List[BoardCell]] = []

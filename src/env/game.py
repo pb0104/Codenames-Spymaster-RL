@@ -99,6 +99,8 @@ class CodenamesSpymasterEnv(gym.Env):
         seed: Optional[int] = None,
         max_clues: int = 12000,
         embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        fixed_board_words: Optional[list[str]] = None,
+        shuffle_fixed_board_words: bool = True,
     ) -> None:
         super().__init__()
 
@@ -110,6 +112,8 @@ class CodenamesSpymasterEnv(gym.Env):
 
         self.words = load_words(board_words_path)
         self.board_config = board_config or make_standard_config(5, 5, seed=seed)
+        self.fixed_board_words = list(fixed_board_words) if fixed_board_words else None
+        self.shuffle_fixed_board_words = bool(shuffle_fixed_board_words)
         self.embedding_store = embedding_store or EmbeddingStore.from_paths(
             board_words_path=board_words_path,
             clue_words_path=clue_words_path,
@@ -350,7 +354,12 @@ class CodenamesSpymasterEnv(gym.Env):
         episode_seed = int(self._rng.integers(0, 1_000_000_000))
         self.board_config.seed = episode_seed
 
-        self.board = generate_board(self.words, self.board_config)
+        self.board = generate_board(
+            self.words,
+            self.board_config,
+            selected_words=self.fixed_board_words,
+            shuffle_selected_words=self.shuffle_fixed_board_words,
+        )
         self.turn_index = 0
         self.used_clue_indices = set()
         self._refresh_board_embeddings()

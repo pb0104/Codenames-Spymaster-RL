@@ -58,6 +58,56 @@ class SACSpymasterAgent:
             replay_buffer_kwargs=replay_buffer_kwargs,
             verbose=0,
         )
+        self.last_bc_pretrain_metrics: dict[str, list[float] | float] = {
+            "bc_losses": [],
+            "bc_action_losses": [],
+            "bc_margin_losses": [],
+            "bc_predicted_margins": [],
+            "bc_target_margins": [],
+            "bc_cosine_margin_loss_weight": 0.0,
+        }
+
+    def _predict_cosine_margin(
+        self,
+        obs_tensor: dict[str, torch.Tensor],
+        desired_goal_tensor: torch.Tensor,
+        predicted_actions: torch.Tensor,
+    ) -> torch.Tensor:
+        board_size = int(desired_goal_tensor.shape[1])
+        embedding_dim = int(self.env.embedding_store.dimension)
+        observation_tensor = obs_tensor["observation"]
+
+        board_embedding_end = board_size * embedding_dim
+        similarity_end = board_embedding_end + board_size * board_size
+        role_end = similarity_end + board_size * 4
+        remaining_end = role_end + board_size
+
+        board_embeddings = observation_tensor[:, :board_embedding_end].reshape(
+            -1, board_size, embedding_dim
+        )
+        role_one_hot = observation_tensor[:, similarity_end:role_end].reshape(
+            -1, board_size, 4
+        )
+        remaining_mask = observation_tensor[:, role_end:remaining_end] > 0.5
+        target_mask = desired_goal_tensor > 0.5
+        bad_mask = remaining_mask & ~(role_one_hot[:, :, 0] > 0.5)
+
+        predicted_clue = F.normalize(predicted_actions[:, :-1], p=2, dim=1, eps=1e-8)
+        scores = torch.bmm(board_embeddings, predicted_clue.unsqueeze(-1)).squeeze(-1)
+
+        has_target = target_mask.any(dim=1)
+        min_target_scores = scores.masked_fill(~target_mask, float("inf")).min(dim=1).values
+
+        has_bad = bad_mask.any(dim=1)
+        max_bad_scores = scores.masked_fill(~bad_mask, float("-inf")).max(dim=1).values
+        max_bad_scores = torch.where(
+            has_bad,
+            max_bad_scores,
+            torch.full_like(max_bad_scores, -1.0),
+        )
+
+        predicted_margin = min_target_scores - max_bad_scores
+        return torch.where(has_target, predicted_margin, torch.zeros_like(predicted_margin))
 
     def bc_pretrain(
         self,
@@ -66,8 +116,17 @@ class SACSpymasterAgent:
         epochs: int = 3,
         batch_size: int = 64,
         learning_rate: float = 1e-3,
+        cosine_margin_loss_weight: float = 0.0,
     ) -> list[float]:
         if not demos or epochs <= 0:
+            self.last_bc_pretrain_metrics = {
+                "bc_losses": [],
+                "bc_action_losses": [],
+                "bc_margin_losses": [],
+                "bc_predicted_margins": [],
+                "bc_target_margins": [],
+                "bc_cosine_margin_loss_weight": float(cosine_margin_loss_weight),
+            }
             return []
 
         observations = stack_demo_observations(demos)
@@ -76,6 +135,10 @@ class SACSpymasterAgent:
             self.model.policy.actor.parameters(), lr=learning_rate
         )
         losses: list[float] = []
+        action_losses: list[float] = []
+        margin_losses: list[float] = []
+        predicted_margin_means: list[float] = []
+        target_margin_means: list[float] = []
 
         num_samples = actions.shape[0]
         indices = np.arange(num_samples)
@@ -83,6 +146,10 @@ class SACSpymasterAgent:
         for _ in range(epochs):
             np.random.shuffle(indices)
             epoch_loss = 0.0
+            epoch_action_loss = 0.0
+            epoch_margin_loss = 0.0
+            epoch_predicted_margin = 0.0
+            epoch_target_margin = 0.0
             num_batches = 0
 
             for start in range(0, num_samples, batch_size):
@@ -94,21 +161,53 @@ class SACSpymasterAgent:
                 target_actions = torch.as_tensor(
                     actions[batch_indices], device=self.model.device
                 )
+                desired_goal_tensor = obs_tensor["desired_goal"]
+                target_margins = torch.as_tensor(
+                    [
+                        float(demos[int(index)].info.get("clue_margin", 0.0))
+                        for index in batch_indices
+                    ],
+                    device=self.model.device,
+                )
 
-                mean_actions, log_std, _ = (
+                mean_actions, _log_std, _ = (
                     self.model.policy.actor.get_action_dist_params(obs_tensor)
                 )
                 predicted_actions = torch.tanh(mean_actions)
-                loss = F.mse_loss(predicted_actions, target_actions)
+                action_loss = F.mse_loss(predicted_actions, target_actions)
+                predicted_margins = self._predict_cosine_margin(
+                    obs_tensor,
+                    desired_goal_tensor,
+                    predicted_actions,
+                )
+                margin_loss = torch.relu(target_margins - predicted_margins).mean()
+                loss = action_loss + cosine_margin_loss_weight * margin_loss
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
                 epoch_loss += float(loss.item())
+                epoch_action_loss += float(action_loss.item())
+                epoch_margin_loss += float(margin_loss.item())
+                epoch_predicted_margin += float(predicted_margins.mean().item())
+                epoch_target_margin += float(target_margins.mean().item())
                 num_batches += 1
 
             losses.append(epoch_loss / max(num_batches, 1))
+            action_losses.append(epoch_action_loss / max(num_batches, 1))
+            margin_losses.append(epoch_margin_loss / max(num_batches, 1))
+            predicted_margin_means.append(epoch_predicted_margin / max(num_batches, 1))
+            target_margin_means.append(epoch_target_margin / max(num_batches, 1))
+
+        self.last_bc_pretrain_metrics = {
+            "bc_losses": losses,
+            "bc_action_losses": action_losses,
+            "bc_margin_losses": margin_losses,
+            "bc_predicted_margins": predicted_margin_means,
+            "bc_target_margins": target_margin_means,
+            "bc_cosine_margin_loss_weight": float(cosine_margin_loss_weight),
+        }
 
         return losses
 
@@ -137,6 +236,7 @@ class SACSpymasterAgent:
         bc_epochs: int = 0,
         bc_batch_size: int = 64,
         bc_learning_rate: float = 1e-3,
+        bc_cosine_margin_loss_weight: float = 0.0,
         seed_buffer: bool = True,
     ) -> dict:
         bc_losses: list[float] = []
@@ -146,12 +246,15 @@ class SACSpymasterAgent:
                 epochs=bc_epochs,
                 batch_size=bc_batch_size,
                 learning_rate=bc_learning_rate,
+                cosine_margin_loss_weight=bc_cosine_margin_loss_weight,
             )
             if seed_buffer:
                 self.seed_replay_buffer(demos)
 
         self.model.learn(total_timesteps=total_timesteps or self.config.total_timesteps)
-        return {"bc_losses": bc_losses}
+        summary = dict(self.last_bc_pretrain_metrics)
+        summary["bc_losses"] = bc_losses
+        return summary
 
     def predict(self, observation, deterministic: bool = True):
         return self.model.predict(observation, deterministic=deterministic)
