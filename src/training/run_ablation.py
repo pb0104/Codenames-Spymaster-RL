@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run ablation conditions for the project.")
     parser.add_argument(
         "--config",
-        default=str(PROJECT_ROOT / "configs" / "smoke_test.yaml"),
+        default=str(PROJECT_ROOT / "configs" / "base.yaml"),
         help="Base config file.",
     )
     return parser.parse_args()

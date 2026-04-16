@@ -1,0 +1,71 @@
+name: training_pipeline_4x4
+seed: 55
+
+data:
+  board_words_path: data/raw/codenames_words.txt
+  clue_words_path: data/raw/common_words.txt
+
+embedding:
+  dim: 384
+  use_wordnet: false
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  board_prompt: board word
+  clue_prompt: clue word
+  max_clues: 5000
+  min_clue_length: 3
+  max_clue_length: 12
+  download_nltk: false
+  nltk_packages:
+    - words
+    - wordnet
+    - omw-1.4
+
+env:
+  rows: 4
+  cols: 4
+  num_friendly: 6
+  num_opponent: 5
+  num_neutral: 4
+  num_assassin: 1
+  max_turns: 20
+  max_clue_count: 9
+  goal_size: 3
+
+reward:
+  turn_penalty: -1.0
+  opponent_penalty: -3.0
+  neutral_penalty: -1.5
+  assassin_penalty: -40.0
+  shaped_weight: 1.0
+
+bc:
+  enabled: true
+  demo_episodes: 500
+  pretrain_epochs: 30
+  batch_size: 32
+  learning_rate: 0.05
+  seed_replay_buffer: true
+
+training:
+  use_her: true
+  total_timesteps: 8000
+  learning_rate: 0.0003
+  buffer_size: 20000
+  learning_starts: 50
+  batch_size: 64
+  gamma: 0.99
+  tau: 0.005
+  n_sampled_goal: 4
+  goal_selection_strategy: future
+  net_arch:
+    - 256
+    - 256
+
+evaluation:
+  episodes: 3
+  deterministic: true
+
+output:
+  output_dir: experiments/logs
+  metrics_file: training_metrics.json
+  model_file: sac_her_model.zip
