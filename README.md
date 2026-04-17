@@ -2,15 +2,15 @@
 
 Goal-conditioned reinforcement learning for the **Codenames spymaster** task.
 
-This repo is a research pipeline for learning one-word clues from semantic embeddings. It includes a Gymnasium environment, a greedy semantic clueing baseline, behavioral cloning from demonstrations, SAC + HER training, reward shaping, evaluation utilities, rollout GIF generation, and notebook experiments.
+This project is a research pipeline for learning one-word clues from semantic embeddings. It includes a Gymnasium environment, a greedy semantic clueing baseline, behavioral cloning from demonstrations, SAC + HER training, reward shaping, evaluation utilities, rollout GIF generation, and notebook experiments.
 
 ## At a Glance
 
 - **Task**: learn a spymaster policy that gives a clue and count for a hidden-role Codenames board.
 - **Representation**: board words and clue candidates are embedded with `sentence-transformers/all-MiniLM-L6-v2`.
 - **Model lineup**: `Greedy`, `BC-only`, `BC + SAC + HER`, and `BC + SAC + HER + Reward Shaping`.
-- **Artifacts**: metrics JSON, model checkpoints, rollout GIFs, notebooks, and a final report are already in the repo.
-- **Current status**: the full infrastructure works, but the checked-in learned agents still do not beat the greedy baseline.
+- **Artifacts**: metrics JSON, model checkpoints, rollout GIFs, notebooks, and a final report.
+- **Summary**: the full pipeline is operational, but the learned agents in the current experiments do not outperform the greedy baseline.
 
 ## Project Structure
 
@@ -94,18 +94,17 @@ Codenames-Spymaster-RL/
 ```
 
 
-## Current Project Status
+## Results Snapshot
 
-The most important GitHub-facing takeaway is that this repo is a **working RL testbed**, not a solved benchmark.
+The current results suggest that this project is best understood as a
+working RL testbed for semantic clue generation rather than a solved
+benchmark.
 
-From the checked-in 5x5 generalization artifacts in [`notebooks/artifacts/final_generalization/trained_agent/sac_her_reward_metrics.json`](notebooks/artifacts/final_generalization/trained_agent/sac_her_reward_metrics.json):
-
-| Method | Win rate | Assassin rate | Friendly reveal rate |
-| --- | ---: | ---: | ---: |
-| Greedy | 1.00 | 0.00 | 1.00 |
-| BC + SAC + HER + Reward Shaping | 0.00 | 1.00 | 0.41 |
-
-That means the repo is currently strongest as:
+In the current 5x5 generalization artifacts in
+[`notebooks/artifacts/final_generalization/trained_agent/sac_her_reward_metrics.json`](notebooks/artifacts/final_generalization/trained_agent/sac_her_reward_metrics.json),
+the greedy baseline remains substantially stronger than the learned
+`BC + SAC + HER + Reward Shaping` pipeline. These results indicate that
+the project is currently strongest as:
 
 - a reproducible environment for the Codenames spymaster task
 - a baseline-vs-learning comparison framework
@@ -114,7 +113,7 @@ That means the repo is currently strongest as:
 
 ## Model Lineup
 
-These are the four methods the repo should present:
+These are the four methods evaluated in the project:
 
 - **Greedy**
   A non-learning semantic baseline in [`src/baselines/greedy_spymaster.py`](src/baselines/greedy_spymaster.py). It chooses the clue that maximizes a cosine-margin heuristic over friendly versus bad words.
@@ -124,6 +123,24 @@ These are the four methods the repo should present:
   The imitation-warm-start RL pipeline in [`src/training/train_sac_her.py`](src/training/train_sac_her.py), using SAC with HER and no reward shaping.
 - **BC + SAC + HER + Reward Shaping**
   The full method, exposed as the `sac_her_reward` pipeline in [`src/training/pipeline_registry.py`](src/training/pipeline_registry.py), which keeps BC and HER and turns on shaped reward.
+
+## Rollout Gallery
+
+The project also includes rollout visualizations for the four main
+pipelines. Yellow borders indicate the current target words selected by
+the goal-conditioned environment.
+
+<p align="center">
+  <img src="reports/greedy.gif" alt="Greedy rollout" width="48%" />
+  <img src="reports/bc_greedy.gif" alt="BC rollout" width="48%" />
+</p>
+<p align="center">
+  <img src="reports/bc_sac_her.gif" alt="BC + SAC + HER rollout" width="48%" />
+  <img src="reports/bc_sac_her_reward.gif" alt="BC + SAC + HER + Reward Shaping rollout" width="48%" />
+</p>
+
+From left to right, top to bottom: `Greedy`, `BC-only`, `BC + SAC + HER`,
+and `BC + SAC + HER + Reward Shaping`.
 
 
 ## Problem Setup
@@ -201,13 +218,15 @@ print(result.to_dict())
 PY
 ```
 
-## Outputs You Get
+## Output Artifacts
 
 - `experiments/logs/`: config-driven logs and model checkpoints
 - `notebooks/artifacts/`: rollout GIFs, saved metrics, and generalization artifacts
 - [`reports/Codenames Final Report.pdf`](reports/Codenames%20Final%20Report.pdf): final write-up
 
-Metrics files include both the evaluated method and a greedy comparison, which makes it easy to see whether a learned pipeline actually improved over the baseline.
+Metrics files include both the evaluated method and a greedy comparison,
+which makes it straightforward to check whether a learned pipeline
+improved over the baseline.
 
 ## Recommended Entry Points
 
@@ -226,7 +245,7 @@ Metrics files include both the evaluated method and a greedy comparison, which m
 - `configs/base.yaml` is the main 5x5 setup.
 - `configs/training_pipeline_3x3.yaml`, `training_pipeline_4x4.yaml`, and `training_pipeline_5x5.yaml` support board-size experiments.
 
-## If You Are Extending This Repo
+## Possible Extensions
 
 The highest-value next steps are probably:
 
